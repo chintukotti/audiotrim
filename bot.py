@@ -37,23 +37,21 @@ def progress_bar(percent: int) -> str:
     return f"[{'█' * blocks}{'░' * (10 - blocks)}] {percent}%"
 
 async def animate(message, text, start_percent, end_percent):
-    step = 2
-    for percent in range(start_percent, end_percent + 1, step):
+    for percent in range(start_percent, end_percent + 1, 2):
         emoji = SPINNER[percent % len(SPINNER)]
         await message.edit_text(
             f"{text} {emoji}\n{progress_bar(percent)}"
         )
         await asyncio.sleep(0.15)
 
-# ------------------ START COMMAND ------------------
+# ------------------ START ------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🎵 *Audio Trim Bot*\n\n"
-        "Send any audio file (mp3 / voice / document).\n"
-        "Enter time in `mm:ss` format.\n\n"
-        "Example:\n"
-        "`01:30` → 1 minute 30 seconds",
+        "Send any audio file.\n"
+        "Use time format `mm:ss`\n\n"
+        "Example: `01:30`",
         parse_mode="Markdown"
     )
 
@@ -75,12 +73,12 @@ async def audio_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.reply_text("❌ Unsupported file type.")
         return ConversationHandler.END
 
+    # STEP 1: Show static downloading message
     progress_msg = await msg.reply_text(
-        "📥 Downloading audio ⏳\n" + progress_bar(0)
+        "📥 Downloading audio...\n" + progress_bar(5)
     )
 
-    await animate(progress_msg, "📥 Downloading audio", 0, 10)
-
+    # STEP 2: Download audio (NO animation here)
     file = await audio.get_file()
     input_path = f"{msg.from_user.id}_input"
     await file.download_to_drive(input_path)
@@ -88,6 +86,7 @@ async def audio_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_audio[msg.from_user.id] = input_path
     user_filename[msg.from_user.id] = filename
 
+    # STEP 3: Animate AFTER download completes
     await animate(progress_msg, "📥 Audio received", 20, 30)
 
     await msg.reply_text(
@@ -96,14 +95,14 @@ async def audio_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return START_TIME
 
-# ------------------ GET START TIME ------------------
+# ------------------ START TIME ------------------
 
 async def get_start_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         context.user_data["start_ms"] = mmss_to_milliseconds(update.message.text)
     except Exception:
         await update.message.reply_text(
-            "❌ Invalid format. Use `mm:ss` (Example: `01:30`)",
+            "❌ Invalid format. Use `mm:ss`",
             parse_mode="Markdown"
         )
         return START_TIME
@@ -114,7 +113,7 @@ async def get_start_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return END_TIME
 
-# ------------------ GET END TIME & TRIM ------------------
+# ------------------ END TIME & TRIM ------------------
 
 async def get_end_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
@@ -125,14 +124,11 @@ async def get_end_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if end_ms <= start_ms:
             raise ValueError
     except Exception:
-        await update.message.reply_text(
-            "❌ End time must be greater than start time.",
-            parse_mode="Markdown"
-        )
+        await update.message.reply_text("❌ End time must be greater than start time.")
         return END_TIME
 
     progress_msg = await update.message.reply_text(
-        "✂️ Processing audio ⏳\n" + progress_bar(40)
+        "✂️ Processing audio...\n" + progress_bar(40)
     )
 
     await animate(progress_msg, "✂️ Trimming audio", 40, 60)
@@ -156,9 +152,7 @@ async def get_end_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
             caption="✅ Trimmed audio ready"
         )
 
-        await progress_msg.edit_text(
-            "🎉 Done!\n" + progress_bar(100)
-        )
+        await progress_msg.edit_text("🎉 Done!\n" + progress_bar(100))
 
     except Exception as e:
         await progress_msg.edit_text("❌ Error while processing audio.")
