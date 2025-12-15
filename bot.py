@@ -17,6 +17,8 @@ START_TIME, END_TIME = range(2)
 user_audio = {}
 user_filename = {}
 
+SPINNER = ["⏳", "🔄", "🔃", "⌛"]
+
 # ------------------ HELPERS ------------------
 
 def mmss_to_milliseconds(time_str: str) -> int:
@@ -33,6 +35,13 @@ def progress_bar(percent: int) -> str:
     blocks = percent // 10
     return f"[{'█' * blocks}{'░' * (10 - blocks)}] {percent}%"
 
+async def animate(message, text, percent):
+    for emoji in SPINNER:
+        await message.edit_text(
+            f"{text} {emoji}\n{progress_bar(percent)}"
+        )
+        await asyncio.sleep(0.4)
+
 # ------------------ START ------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -41,7 +50,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Send any audio file.\n"
         "Enter time in `mm:ss` format.\n\n"
         "Example:\n"
-        "`01:30` → 1 minute 30 seconds",
+        "`01:30` → 1 min 30 sec",
         parse_mode="Markdown"
     )
 
@@ -63,7 +72,7 @@ async def audio_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.reply_text("❌ Unsupported file type.")
         return ConversationHandler.END
 
-    progress_msg = await msg.reply_text("📥 Downloading audio...\n" + progress_bar(10))
+    progress_msg = await msg.reply_text("📥 Receiving audio ⏳\n" + progress_bar(10))
 
     file = await audio.get_file()
     input_path = f"{msg.from_user.id}_input"
@@ -72,7 +81,7 @@ async def audio_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_audio[msg.from_user.id] = input_path
     user_filename[msg.from_user.id] = filename
 
-    await progress_msg.edit_text("✅ Audio received\n" + progress_bar(30))
+    await animate(progress_msg, "📥 Audio received", 30)
 
     await msg.reply_text(
         "⏱️ Enter *START time* in `mm:ss`\nExample: `01:30`",
@@ -106,22 +115,21 @@ async def get_end_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ End time must be greater than start time.")
         return END_TIME
 
-    progress_msg = await update.message.reply_text("✂️ Processing audio...\n" + progress_bar(40))
-    await asyncio.sleep(0.5)
+    progress_msg = await update.message.reply_text("✂️ Processing audio ⏳\n" + progress_bar(40))
+    await animate(progress_msg, "✂️ Trimming audio", 60)
 
     input_audio = user_audio[user_id]
     original_name = user_filename[user_id]
     output_file = f"trimmed_{original_name}"
 
     try:
-        await progress_msg.edit_text("✂️ Trimming audio...\n" + progress_bar(60))
         audio = AudioSegment.from_file(input_audio)
         trimmed_audio = audio[start_ms:end_ms]
 
-        await progress_msg.edit_text("💾 Exporting audio...\n" + progress_bar(80))
+        await animate(progress_msg, "💾 Exporting audio", 80)
         trimmed_audio.export(output_file, format="mp3")
 
-        await progress_msg.edit_text("📤 Uploading audio...\n" + progress_bar(95))
+        await animate(progress_msg, "📤 Uploading audio", 95)
 
         await update.message.reply_audio(
             audio=open(output_file, "rb"),
@@ -129,7 +137,7 @@ async def get_end_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
             caption="✅ Trimmed audio ready"
         )
 
-        await progress_msg.edit_text("✅ Done!\n" + progress_bar(100))
+        await progress_msg.edit_text("🎉 Done!\n" + progress_bar(100))
 
     except Exception as e:
         await progress_msg.edit_text("❌ Error while processing audio.")
