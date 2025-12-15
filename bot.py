@@ -1,4 +1,5 @@
 import os
+import asyncio
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -16,13 +17,9 @@ START_TIME, END_TIME = range(2)
 user_audio = {}
 user_filename = {}
 
-# ------------------ HELPER FUNCTION ------------------
+# ------------------ HELPERS ------------------
 
 def mmss_to_milliseconds(time_str: str) -> int:
-    """
-    Converts mm:ss to milliseconds
-    Example: 01:30 -> 90000 ms
-    """
     parts = time_str.split(":")
     if len(parts) != 2:
         raise ValueError
@@ -32,15 +29,19 @@ def mmss_to_milliseconds(time_str: str) -> int:
         raise ValueError
     return (minutes * 60 + seconds) * 1000
 
-# ------------------ START COMMAND ------------------
+def progress_bar(percent: int) -> str:
+    blocks = percent // 10
+    return f"[{'█' * blocks}{'░' * (10 - blocks)}] {percent}%"
+
+# ------------------ START ------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🎵 *Audio Trim Bot*\n\n"
-        "Send me any audio file (mp3 / voice / document).\n"
-        "Then enter time in this format:\n\n"
-        "`mm:ss`  (Example: `01:30`)\n\n"
-        "I will trim and send audio with the *same file name* ✅",
+        "Send any audio file.\n"
+        "Enter time in `mm:ss` format.\n\n"
+        "Example:\n"
+        "`01:30` → 1 minute 30 seconds",
         parse_mode="Markdown"
     )
 
@@ -62,80 +63,80 @@ async def audio_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.reply_text("❌ Unsupported file type.")
         return ConversationHandler.END
 
-    file = await audio.get_file()
+    progress_msg = await msg.reply_text("📥 Downloading audio...\n" + progress_bar(10))
 
+    file = await audio.get_file()
     input_path = f"{msg.from_user.id}_input"
     await file.download_to_drive(input_path)
 
     user_audio[msg.from_user.id] = input_path
     user_filename[msg.from_user.id] = filename
 
+    await progress_msg.edit_text("✅ Audio received\n" + progress_bar(30))
+
     await msg.reply_text(
-        "⏱️ Enter *START time* in `mm:ss` format\n"
-        "Example: `01:30`",
+        "⏱️ Enter *START time* in `mm:ss`\nExample: `01:30`",
         parse_mode="Markdown"
     )
     return START_TIME
 
-# ------------------ GET START TIME ------------------
+# ------------------ START TIME ------------------
 
 async def get_start_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        start_ms = mmss_to_milliseconds(update.message.text)
-        context.user_data["start_ms"] = start_ms
+        context.user_data["start_ms"] = mmss_to_milliseconds(update.message.text)
     except Exception:
-        await update.message.reply_text(
-            "❌ Invalid format.\nUse `mm:ss` (Example: `01:30`)",
-            parse_mode="Markdown"
-        )
+        await update.message.reply_text("❌ Invalid format. Use `mm:ss`")
         return START_TIME
 
-    await update.message.reply_text(
-        "⏱️ Enter *END time* in `mm:ss` format",
-        parse_mode="Markdown"
-    )
+    await update.message.reply_text("⏱️ Enter *END time* in `mm:ss`", parse_mode="Markdown")
     return END_TIME
 
-# ------------------ GET END TIME & TRIM ------------------
+# ------------------ END TIME & TRIM ------------------
 
 async def get_end_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+
     try:
         end_ms = mmss_to_milliseconds(update.message.text)
         start_ms = context.user_data["start_ms"]
         if end_ms <= start_ms:
             raise ValueError
     except Exception:
-        await update.message.reply_text(
-            "❌ End time must be greater than start time.\n"
-            "Use `mm:ss` format.",
-            parse_mode="Markdown"
-        )
+        await update.message.reply_text("❌ End time must be greater than start time.")
         return END_TIME
 
-    user_id = update.message.from_user.id
-    input_audio = user_audio.get(user_id)
-    original_name = user_filename.get(user_id, "trimmed_audio.mp3")
+    progress_msg = await update.message.reply_text("✂️ Processing audio...\n" + progress_bar(40))
+    await asyncio.sleep(0.5)
 
-    # Create output file name
+    input_audio = user_audio[user_id]
+    original_name = user_filename[user_id]
     output_file = f"trimmed_{original_name}"
 
     try:
+        await progress_msg.edit_text("✂️ Trimming audio...\n" + progress_bar(60))
         audio = AudioSegment.from_file(input_audio)
         trimmed_audio = audio[start_ms:end_ms]
+
+        await progress_msg.edit_text("💾 Exporting audio...\n" + progress_bar(80))
         trimmed_audio.export(output_file, format="mp3")
+
+        await progress_msg.edit_text("📤 Uploading audio...\n" + progress_bar(95))
 
         await update.message.reply_audio(
             audio=open(output_file, "rb"),
             filename=original_name,
-            caption="✅ Trimmed audio"
+            caption="✅ Trimmed audio ready"
         )
 
+        await progress_msg.edit_text("✅ Done!\n" + progress_bar(100))
+
     except Exception as e:
-        await update.message.reply_text("❌ Error while processing audio.")
+        await progress_msg.edit_text("❌ Error while processing audio.")
         print(e)
 
     finally:
-        if input_audio and os.path.exists(input_audio):
+        if os.path.exists(input_audio):
             os.remove(input_audio)
         if os.path.exists(output_file):
             os.remove(output_file)
@@ -147,26 +148,19 @@ async def get_end_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
-    conv_handler = ConversationHandler(
+    conv = ConversationHandler(
         entry_points=[
-            MessageHandler(
-                filters.AUDIO | filters.VOICE | filters.Document.ALL,
-                audio_handler
-            )
+            MessageHandler(filters.AUDIO | filters.VOICE | filters.Document.ALL, audio_handler)
         ],
         states={
-            START_TIME: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, get_start_time)
-            ],
-            END_TIME: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, get_end_time)
-            ],
+            START_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_start_time)],
+            END_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_end_time)],
         },
         fallbacks=[CommandHandler("start", start)],
     )
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(conv_handler)
+    app.add_handler(conv)
 
     app.run_polling()
 
