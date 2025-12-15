@@ -3,7 +3,7 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ConversationHandler, ContextTypes, filters
 from pydub import AudioSegment
 
-TOKEN = os.environ.get("6623259150:AAHObkFS2mYhPu3hbAhZzDduDbOCdhTDWKw")
+TOKEN = os.environ.get("TOKEN")
 
 START, END = range(2)
 user_audio = {}
